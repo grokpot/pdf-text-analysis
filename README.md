@@ -16,6 +16,8 @@ pdf-folders
     ...
 ```
 
-The tool can be run simply by `pip install -r requirements.txt` and then `python3 runner.py`.
-The tool processes the PDFs, applies text processing per specified rules (via global vars at the top of the file), and outputs wordclouds for each folder, as well as one for the combined corpus of text.
+The tool can be run simply by `pip install -r requirements.txt` and then `python3 runner.py`.  
+
+The tool processes the PDFs, applies text processing per specified rules (via global vars at the top of the file), and outputs wordclouds for each folder, as well as one for the combined corpus of text.  
+
 In addition, a bar chart of the publication dates is output.
