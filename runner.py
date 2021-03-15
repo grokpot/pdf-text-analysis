@@ -2,6 +2,7 @@ from datetime import timedelta
 import json
 import os
 from pathlib import Path
+import re
 from shutil import copyfile
 from timeit import default_timer as timer
 
@@ -112,13 +113,15 @@ def rename_files():
         for pdf in pdfs:
             title = metadata.get(pdf.name, {}).get(META_LABEL_TITLE)
             if title and title != pdf.name:
+                # Convert to ACII chars for compatibility with Onedrive/Sharepoint
+                title = str(title.encode('utf-8').decode('ascii', 'ignore'))
+                # Filename compatibility for OneDrive/Sharepoint
+                title = re.sub("[^ a-zA-Z1-9]+", "", title)
                 # Reduce title length
-                title = title[:50]
-                # Remove punctuation in title to prevent directory misinterpretation
-                title = title.translate(str.maketrans('', '', string.punctuation))
+                title = title[:70]
                 title = f'{title}.pdf'
                 copyfile(pdf, Path(output_dir, title))
-                print(f'Renamed "{pdf.name}" to "{title}"')
+                print(f'Copied and renamed \'{pdf.name}\' to {repr(title)}')   # Using repr to show hidden chars
 
 
 def analyze_text():
@@ -235,11 +238,11 @@ def create_pub_year_plot():
 
 def main():
     start = timer()
-    collect_metadata()
+    # collect_metadata()
     rename_files()
-    analyze_text()
-    create_wordclouds()
-    create_pub_year_plot()
+    # analyze_text()
+    # create_wordclouds()
+    # create_pub_year_plot()
     print(f'Elapsed Time: {timedelta(seconds=timer() - start)}')
 
 
