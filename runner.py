@@ -111,17 +111,16 @@ def rename_files():
         output_dir = Path(OUTPUT_PATH, OUTPUT_DIR_RENAMED_PDFS, os.path.basename(folder))
         output_dir.mkdir(parents=True, exist_ok=True) 
         for pdf in pdfs:
-            title = metadata.get(pdf.name, {}).get(META_LABEL_TITLE)
-            if title and title != pdf.name:
-                # Convert to ACII chars for compatibility with Onedrive/Sharepoint
-                title = str(title.encode('utf-8').decode('ascii', 'ignore'))
-                # Filename compatibility for OneDrive/Sharepoint
-                title = re.sub("[^ a-zA-Z1-9]+", "", title)
-                # Reduce title length
-                title = title[:70]
-                title = f'{title}.pdf'
-                copyfile(pdf, Path(output_dir, title))
-                print(f'Copied and renamed \'{pdf.name}\' to {repr(title)}')   # Using repr to show hidden chars
+            title = metadata.get(pdf.name, {}).get(META_LABEL_TITLE, None) or pdf.name
+            # Convert to ACII chars for compatibility with Onedrive/Sharepoint
+            title = str(title.encode('utf-8').decode('ascii', 'ignore'))
+            # Filename compatibility for OneDrive/Sharepoint
+            title = re.sub("[^ a-zA-Z1=0-9]+", "", title)
+            # Reduce title length
+            title = title[:70]
+            title = f'{title}.pdf'
+            copyfile(pdf, Path(output_dir, title))
+            print(f'Copied and renamed \'{pdf.name}\' to {repr(title)}')   # Using repr to show hidden chars
 
 
 def analyze_text():
@@ -238,11 +237,11 @@ def create_pub_year_plot():
 
 def main():
     start = timer()
-    # collect_metadata()
+    collect_metadata()
     rename_files()
-    # analyze_text()
-    # create_wordclouds()
-    # create_pub_year_plot()
+    analyze_text()
+    create_wordclouds()
+    create_pub_year_plot()
     print(f'Elapsed Time: {timedelta(seconds=timer() - start)}')
 
 
