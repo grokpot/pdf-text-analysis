@@ -1,5 +1,5 @@
 # pdf-text-analysis
-This tool is used for text processing and analysis of multiple folders of multiple PDF files.
+This tool is used for text processing and analysis of multiple folders of multiple PDF files. Ideal for systematic literature reviews.
 It assumes you have the following structure:
 ```
 pdf-folders
