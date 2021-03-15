@@ -1,6 +1,8 @@
 from datetime import timedelta
 import json
+import os
 from pathlib import Path
+from shutil import copyfile
 from timeit import default_timer as timer
 
 from pdfminer.high_level import extract_text
@@ -15,21 +17,113 @@ nltk.download('stopwords')
 import string
 from wordcloud import WordCloud
 
+PARENT_PDF_FOLDER_PATH = './pdf-folders'
 OUTPUT_PATH = 'output'
+OUTPUT_DIR_RENAMED_PDFS = 'renamed-pdfs'
 PDF_GLOB_PATTERN = '**/*.pdf'
 BLACKLIST_PARTIALS = ['cid:']
 BLACKLIST_EXACT = ['author', 'pp', 'et', 'al']
 BLACKLIST_PUNCTUATION = ['.', '-']
-PUB_YEAR_LABEL = 'pub_year'
+META_LABEL_PUB_YEAR = 'pub_year'
+META_LABEL_TITLE = 'title'
 
 
-def process_pdf_folders():
-    metadata = {}
-    
-    pdf_folders_path = Path('./pdf-folders')
+def _get_folders():
+    """
+    Returns a list of folder paths inside of the dedicated parent folder directory
+    """
+    pdf_folders_path = Path(PARENT_PDF_FOLDER_PATH)
     folders = [folder for folder in pdf_folders_path.iterdir() if folder.is_dir()]
     num_pdfs = sum([len(list(folder.glob(PDF_GLOB_PATTERN))) for folder in folders])
-    num_processed_pdfs = 1
+    return folders, num_pdfs
+
+
+def collect_metadata():
+    """
+    Builds output/metadata.json which contains some metadata for each PDF
+    """
+    metadata = {}
+    folders , num_pdfs = _get_folders()
+    num_processed_pdfs = 0
+
+    for folder in folders:
+        pdfs = list(folder.glob(PDF_GLOB_PATTERN))
+        
+        for pdf in pdfs:
+            num_processed_pdfs += 1
+            metadata[pdf.name] = {}
+            print()
+            print(f'Collecting metadata {num_processed_pdfs}/{num_pdfs}: {pdf.name}')
+            
+            with open(pdf, 'rb') as fd:
+                parser = PDFParser(fd)
+                doc = PDFDocument(parser)
+                if not doc.info:
+                    pub_year = 'not available'
+                    title = None
+                else:
+                    # Date
+                    creation_date = doc.info[0]['CreationDate']
+                    # Sometimes the date comes as a PDFObjRef
+                    if isinstance(creation_date, PDFObjRef):
+                        creation_date = resolve1(creation_date)
+                    creation_date = creation_date.decode("utf-8")
+                    pub_year = creation_date[2:6]
+                    
+                    # Title
+                    title = doc.info[0].get('Title', b'')
+                    # Sometimes the date comes as a PDFObjRef
+                    if isinstance(title, PDFObjRef):
+                        title = resolve1(title)
+                    title = title.decode('unicode_escape') # Prevent exception from non-ascii chars
+                    title = title.replace('\x00', '') # Remove null bytes which causes problems with file renaming
+                    print(title)
+
+                metadata[pdf.name][META_LABEL_PUB_YEAR] = pub_year
+                metadata[pdf.name][META_LABEL_TITLE] = title
+    
+    # Write metadata file for all pdfs
+    metadata_path = Path(f'{OUTPUT_PATH}/metadata.json')
+    with open(metadata_path, 'w') as fd:
+        json.dump(metadata, fd)
+
+
+def _read_metadata():
+    metadata_path = Path(f'{OUTPUT_PATH}/metadata.json')
+    with open(metadata_path, 'r') as fd:
+        metadata = json.load(fd)
+    return metadata
+
+
+def rename_files():
+    """
+    Often, downloaded pdfs come with a filename such as '1-s2.0-S036136821400004X-main'
+    which makes navigation difficult when searching by paper title. 
+    This function renames files to the title provided in the PDF metadata and copies them to a similar structure in output.
+    """
+    folders , num_pdfs = _get_folders()
+    metadata = _read_metadata()
+
+    for folder in folders:
+        pdfs = list(folder.glob(PDF_GLOB_PATTERN))
+        # Create output dir
+        output_dir = Path(OUTPUT_PATH, OUTPUT_DIR_RENAMED_PDFS, os.path.basename(folder))
+        output_dir.mkdir(parents=True, exist_ok=True) 
+        for pdf in pdfs:
+            title = metadata.get(pdf.name, {}).get(META_LABEL_TITLE)
+            if title and title != pdf.name:
+                # Reduce title length
+                title = title[:50]
+                # Remove punctuation in title to prevent directory misinterpretation
+                title = title.translate(str.maketrans('', '', string.punctuation))
+                title = f'{title}.pdf'
+                copyfile(pdf, Path(output_dir, title))
+                print(f'Renamed "{pdf.name}" to "{title}"')
+
+
+def analyze_text():
+    folders , num_pdfs = _get_folders()
+    num_processed_pdfs = 0
 
     # For every Folder
     for folder in folders:
@@ -38,30 +132,13 @@ def process_pdf_folders():
         
         # For every PDF
         for pdf in pdfs:
-            metadata[pdf.name] = {}
-
-            print()
-            print(f'Processing PDF {num_processed_pdfs}/{num_pdfs}: {pdf.name}')
             num_processed_pdfs += 1
+            print()
+            print(f'Analyzing text {num_processed_pdfs}/{num_pdfs}: {pdf.name}')
 
             # # For testing single PDFS
             # if '206049044.pdf' not in pdf.name:
             #     continue
-
-            # Collect Metadata
-            with open(pdf, 'rb') as fd:
-                parser = PDFParser(fd)
-                doc = PDFDocument(parser)
-                if not doc.info:
-                    pub_year = 'not available'
-                else:
-                    creation_date = doc.info[0]['CreationDate']
-                    # Sometimes the date comes as a PDFObjRef
-                    if isinstance(creation_date, PDFObjRef):
-                        creation_date = resolve1(creation_date)
-                    creation_date = creation_date.decode("utf-8")
-                    pub_year = creation_date[2:6]
-                metadata[pdf.name][PUB_YEAR_LABEL] = pub_year
             
             text = extract_text(pdf)
 
@@ -113,11 +190,6 @@ def process_pdf_folders():
         with open(corpus_path, 'w') as fd:
             json.dump(corpus, fd)
 
-    # Write metadata file for all pdfs
-    metadata_path = Path(f'{OUTPUT_PATH}/metadata.json')
-    with open(metadata_path, 'w') as fd:
-        json.dump(metadata, fd)
-
 
 def create_wordcloud(corpus, filename):
     corpus_str =(" ").join(corpus)
@@ -141,12 +213,10 @@ def create_wordclouds():
         
 
 def create_pub_year_plot():
-    metadata_path = Path(f'{OUTPUT_PATH}/metadata.json')
-    with open(metadata_path, 'r') as fd:
-        metadata = json.load(fd)
+    metadata = _read_metadata()
     counts = dict()
     for data in metadata.values():
-        pub_year = data[PUB_YEAR_LABEL]
+        pub_year = data[META_LABEL_PUB_YEAR]
         if pub_year.isnumeric() and pub_year != '0000':
             counts[pub_year] = counts.get(pub_year, 0) + 1
         else:
@@ -165,7 +235,9 @@ def create_pub_year_plot():
 
 def main():
     start = timer()
-    process_pdf_folders()
+    collect_metadata()
+    rename_files()
+    analyze_text()
     create_wordclouds()
     create_pub_year_plot()
     print(f'Elapsed Time: {timedelta(seconds=timer() - start)}')
