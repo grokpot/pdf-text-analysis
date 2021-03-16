@@ -21,3 +21,7 @@ The tool can be run simply by `pip install -r requirements.txt` and then `python
 The tool processes the PDFs, applies text processing per specified rules (via global vars at the top of the file), and outputs wordclouds for each folder, as well as one for the combined corpus of text.  
 
 In addition, a bar chart of the publication dates is output.
+
+## TODOS
+* Keyword search functionality across folders/pdfs
+* Make metadata an xlsx file instead of json for better UX
