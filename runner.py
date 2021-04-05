@@ -6,6 +6,7 @@ import re
 from shutil import copyfile
 from timeit import default_timer as timer
 
+import pandas as pd
 from pdfminer.high_level import extract_text
 from pdfminer.pdfdocument import PDFDocument
 from pdfminer.pdfparser import PDFParser
@@ -18,23 +19,25 @@ nltk.download('stopwords')
 import string
 from wordcloud import WordCloud
 
-PARENT_PDF_FOLDER_PATH = './pdf-folders'
-OUTPUT_PATH = 'output'
+INPUT_FOLDER_PATH = './input'
+OUTPUT_FOLDER_PATH = './output'
 OUTPUT_DIR_RENAMED_PDFS = 'renamed-pdfs'
 PDF_GLOB_PATTERN = '**/*.pdf'
+EXCEL_GLOB_PATTERN = '**/*.xlsx'
 BLACKLIST_PARTIALS = ['cid:']
 BLACKLIST_EXACT = ['author', 'pp', 'et', 'al', 'supply', 'chain', 'sustainability', 'sustainable', 'environmental', 'environment', 'management', 'research', 'literature', 'review', 'paper', 'journal']
 BLACKLIST_PUNCTUATION = ['.', '-']
 META_LABEL_PUB_YEAR = 'pub_year'
 META_LABEL_TITLE = 'title'
+NUM_FOLDER_SOURCE_PAIRS_TO_KEEP = 20
 
 
-def _get_folders():
+def _get_sub_folders():
     """
     Returns a list of folder paths inside of the dedicated parent folder directory
     """
-    pdf_folders_path = Path(PARENT_PDF_FOLDER_PATH)
-    folders = [folder for folder in pdf_folders_path.iterdir() if folder.is_dir()]
+    folders_path = Path(INPUT_FOLDER_PATH)
+    folders = [folder for folder in folders_path.iterdir() if folder.is_dir()]
     num_pdfs = sum([len(list(folder.glob(PDF_GLOB_PATTERN))) for folder in folders])
     return folders, num_pdfs
 
@@ -44,7 +47,7 @@ def collect_metadata():
     Builds output/metadata.json which contains some metadata for each PDF
     """
     metadata = {}
-    folders , num_pdfs = _get_folders()
+    folders , num_pdfs = _get_sub_folders()
     num_processed_pdfs = 0
 
     for folder in folders:
@@ -84,13 +87,13 @@ def collect_metadata():
                 metadata[pdf.name][META_LABEL_TITLE] = title
     
     # Write metadata file for all pdfs
-    metadata_path = Path(f'{OUTPUT_PATH}/metadata.json')
+    metadata_path = Path(f'{OUTPUT_FOLDER_PATH}/metadata.json')
     with open(metadata_path, 'w') as fd:
         json.dump(metadata, fd)
 
 
 def _read_metadata():
-    metadata_path = Path(f'{OUTPUT_PATH}/metadata.json')
+    metadata_path = Path(f'{OUTPUT_FOLDER_PATH}/metadata.json')
     with open(metadata_path, 'r') as fd:
         metadata = json.load(fd)
     return metadata
@@ -102,13 +105,13 @@ def rename_files():
     which makes navigation difficult when searching by paper title. 
     This function renames files to the title provided in the PDF metadata and copies them to a similar structure in output.
     """
-    folders , num_pdfs = _get_folders()
+    folders , num_pdfs = _get_sub_folders()
     metadata = _read_metadata()
 
     for folder in folders:
         pdfs = list(folder.glob(PDF_GLOB_PATTERN))
         # Create output dir
-        output_dir = Path(OUTPUT_PATH, OUTPUT_DIR_RENAMED_PDFS, os.path.basename(folder))
+        output_dir = Path(OUTPUT_FOLDER_PATH, OUTPUT_DIR_RENAMED_PDFS, os.path.basename(folder))
         output_dir.mkdir(parents=True, exist_ok=True) 
         for pdf in pdfs:
             title = metadata.get(pdf.name, {}).get(META_LABEL_TITLE, None) or pdf.name
@@ -123,8 +126,105 @@ def rename_files():
             print(f'Copied and renamed \'{pdf.name}\' to {repr(title)}')   # Using repr to show hidden chars
 
 
+def combine_search_files():
+    folders , _ = _get_sub_folders()
+    metadata = _read_metadata()
+
+    header_mappings = {
+        'scopus': {
+            'Source': 'Scopus',
+            'Title': 'Title', 
+            'Authors': 'Authors',
+            'Year': 'Year', 
+            'Journal': 'Source title', 
+            'DOI': 'DOI',
+            'URL': 'Link'
+        },
+        'wos': {
+            'Source': 'Web of Science',
+            'Title': 'Article Title', 
+            'Authors': 'Authors',
+            'Year': 'Publication Year', 
+            'Journal': 'Source Title', 
+            'DOI': 'DOI',
+            'URL': None
+        }, 
+        'ieee': {
+            'Source': 'IEEE',
+            'Title': 'Document Title', 
+            'Authors': 'Authors',
+            'Year': 'Publication Year', 
+            'Journal': 'Publication Title', 
+            'DOI': 'DOI',
+            'URL': 'PDF Link'
+        },
+        'springer': {
+            'Source': 'Springer',
+            'Title': 'Item Title', 
+            'Authors': 'Authors',
+            'Year': 'Publication Year', 
+            'Journal': 'Publication Title', 
+            'DOI': 'DOI',
+            'URL': 'URL'
+        },
+        'tf': {
+            'Source': 'Taylor Francis',
+            'Title': 'Article title', 
+            'Authors': 'Authors',
+            'Year': 'Volume year', 
+            'Journal': 'Journal title', 
+            'DOI': 'DOI',
+            'URL': 'URL'
+        }
+    }
+
+    COLS = ['Folder', 'Source', 'Title', 'Authors', 'Year', 'Journal', 'DOI', 'URL']
+    df_result = pd.DataFrame()
+    df = pd.DataFrame()
+
+    # Iterate excel files in folders
+    for folder in folders:
+        excel_files = list(folder.glob(EXCEL_GLOB_PATTERN))
+        for xl in excel_files:
+
+            # If files are named `scopus.xlsx`, use that
+            if '-' not in xl.name:
+                source_type = xl.name
+            # If files are named `sks1-scopus.xlsx`, remove the first part
+            else:
+                source_type = xl.name.split('-')[1].split('.')[0]
+                
+            # Iterate columns. Some are special
+            df = pd.read_excel(xl)
+            for col in COLS:
+                if col == 'Folder':
+                    df['Folder'] = folder.name
+                else:
+                    val = header_mappings[source_type][col]
+                    if col == 'Source': 
+                        df['Source'] = val
+                    else:
+                        try:
+                            df[col] = df[[val]]
+                        except:
+                            print(f"{col} doesn't exist in {source_type}")
+                            
+            df_result = pd.concat([df_result, df[df.columns.intersection(COLS)]])
+    
+    # Drop duplicates based on Title OR DOI
+    size_before = df_result.shape[0]
+    df_result = df_result.drop_duplicates('Title').drop_duplicates('DOI')
+    size_after = df_result.shape[0]
+    print(f"Removed {size_before - size_after} duplicates from {size_before} records.")
+    # Only keep top X results per folder-source pair
+    df_result = df_result.groupby(['Folder', 'Source']).head(NUM_FOLDER_SOURCE_PAIRS_TO_KEEP)
+    # Reorder the columns
+    df_result = df_result[COLS]
+    df_result.to_excel(Path(OUTPUT_FOLDER_PATH, 'combined_searches.xlsx'), index=False)
+
+
 def analyze_text():
-    folders , num_pdfs = _get_folders()
+    folders , num_pdfs = _get_sub_folders()
     num_processed_pdfs = 0
 
     # For every Folder
@@ -188,7 +288,7 @@ def analyze_text():
             corpus += word_list
         
         # Write corpus file for every folder
-        corpus_path = Path(f'{OUTPUT_PATH}/corpus-{folder.name}.json')
+        corpus_path = Path(f'{OUTPUT_FOLDER_PATH}/corpus-{folder.name}.json')
         with open(corpus_path, 'w') as fd:
             json.dump(corpus, fd)
 
@@ -199,14 +299,14 @@ def create_wordcloud(corpus, filename):
     plt.figure(figsize=(15,8))
     plt.imshow(wordcloud)
     plt.axis("off")
-    save_path = Path(f'{OUTPUT_PATH}/wordcloud-{filename}')
+    save_path = Path(f'{OUTPUT_FOLDER_PATH}/wordcloud-{filename}')
     plt.savefig(f'{save_path}.png', bbox_inches='tight')
     plt.close()
 
 
 def create_wordclouds():
     combined_corpus = []
-    for corpus_file in Path(OUTPUT_PATH).glob('corpus-*.json'):
+    for corpus_file in Path(OUTPUT_FOLDER_PATH).glob('corpus-*.json'):
         with open(corpus_file, 'r') as fd:
             corpus = json.load(fd)
         combined_corpus += corpus
@@ -230,18 +330,22 @@ def create_pub_year_plot():
     plt.xlabel('Year')
     plt.ylabel('Number of Publications')
     plt.bar(*zip(*counts.items()))
-    save_path = Path(f'{OUTPUT_PATH}/pub_years')
+    save_path = Path(f'{OUTPUT_FOLDER_PATH}/pub_years')
     plt.savefig(f'{save_path}.png', bbox_inches='tight')
     plt.close()
 
 
 def main():
     start = timer()
-    collect_metadata()
-    rename_files()
-    analyze_text()
-    create_wordclouds()
-    create_pub_year_plot()
+    # PDF to CSV
+    # collect_metadata()
+    # rename_files()
+    # Combining CSVs
+    combine_search_files()
+    # Text Analysis
+    # analyze_text()
+    # create_wordclouds()
+    # create_pub_year_plot()
     print(f'Elapsed Time: {timedelta(seconds=timer() - start)}')
 
 
