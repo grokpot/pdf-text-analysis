@@ -1,4 +1,5 @@
 from datetime import timedelta
+from itertools import chain
 import json
 import os
 from pathlib import Path
@@ -22,8 +23,10 @@ from wordcloud import WordCloud
 INPUT_FOLDER_PATH = './input'
 OUTPUT_FOLDER_PATH = './output'
 OUTPUT_DIR_RENAMED_PDFS = 'renamed-pdfs'
-PDF_GLOB_PATTERN = '**/*.pdf'
-EXCEL_GLOB_PATTERN = '**/*.xlsx'
+GLOB_PATTERN_PDF = '**/*.pdf'
+GLOB_PATTERN_XLSX = '**/*.xlsx'
+GLOB_PATTERN_XLS = '**/*.xls'
+GLOB_PATTERN_CSV = '**/*.csv'
 BLACKLIST_PARTIALS = ['cid:']
 BLACKLIST_EXACT = ['author', 'pp', 'et', 'al', 'supply', 'chain', 'sustainability', 'sustainable', 'environmental', 'environment', 'management', 'research', 'literature', 'review', 'paper', 'journal']
 BLACKLIST_PUNCTUATION = ['.', '-']
@@ -38,7 +41,8 @@ def _get_sub_folders():
     """
     folders_path = Path(INPUT_FOLDER_PATH)
     folders = [folder for folder in folders_path.iterdir() if folder.is_dir()]
-    num_pdfs = sum([len(list(folder.glob(PDF_GLOB_PATTERN))) for folder in folders])
+    folders = sorted(folders, key=lambda f: f.name)
+    num_pdfs = sum([len(list(folder.glob(GLOB_PATTERN_PDF))) for folder in folders])
     return folders, num_pdfs
 
 
@@ -51,7 +55,7 @@ def collect_metadata():
     num_processed_pdfs = 0
 
     for folder in folders:
-        pdfs = list(folder.glob(PDF_GLOB_PATTERN))
+        pdfs = list(folder.glob(GLOB_PATTERN_PDF))
         
         for pdf in pdfs:
             num_processed_pdfs += 1
@@ -109,7 +113,7 @@ def rename_files():
     metadata = _read_metadata()
 
     for folder in folders:
-        pdfs = list(folder.glob(PDF_GLOB_PATTERN))
+        pdfs = list(folder.glob(GLOB_PATTERN_PDF))
         # Create output dir
         output_dir = Path(OUTPUT_FOLDER_PATH, OUTPUT_DIR_RENAMED_PDFS, os.path.basename(folder))
         output_dir.mkdir(parents=True, exist_ok=True) 
@@ -128,7 +132,6 @@ def rename_files():
 
 def combine_search_files():
     folders , _ = _get_sub_folders()
-    metadata = _read_metadata()
 
     header_mappings = {
         'scopus': {
@@ -178,26 +181,30 @@ def combine_search_files():
         }
     }
 
-    COLS = ['Folder', 'Source', 'Title', 'Authors', 'Year', 'Journal', 'DOI', 'URL']
+    COLS = ['Folder', 'Source', 'Result Rank', 'Title', 'Authors', 'Year', 'Journal', 'DOI', 'URL']
     df_result = pd.DataFrame()
     df = pd.DataFrame()
 
-    # Iterate excel files in folders
+    # Iterate XLSX, XLS, CSV files in folders
     for folder in folders:
-        excel_files = list(folder.glob(EXCEL_GLOB_PATTERN))
-        for xl in excel_files:
+        files = list(chain(*[list(folder.glob(pattern)) for pattern in [GLOB_PATTERN_XLSX, GLOB_PATTERN_XLS,GLOB_PATTERN_CSV]]))
 
-            # If files are named `scopus.xlsx`, use that
-            if '-' not in xl.name:
-                source_type = xl.name
-            # If files are named `sks1-scopus.xlsx`, remove the first part
-            else:
-                source_type = xl.name.split('-')[1].split('.')[0]
+        for f in files:
+            # Remove extension
+            source_type, file_type = f.name.split('.')
+            # handles both cases if files are named `sks1-scopus` or just `scopus`
+            source_type = source_type.split('-')[1] if '-' in source_type else source_type
                 
+            if file_type == 'csv':
+                df = pd.read_csv(f)
+            else:
+                df = pd.read_excel(f)
+  
             # Iterate columns. Some are special
-            df = pd.read_excel(xl)
             for col in COLS:
-                if col == 'Folder':
+                if col == 'Result Rank':
+                    df['Result Rank'] = df.index
+                elif col == 'Folder':
                     df['Folder'] = folder.name
                 else:
                     val = header_mappings[source_type][col]
@@ -208,12 +215,13 @@ def combine_search_files():
                             df[col] = df[[val]]
                         except:
                             print(f"{col} doesn't exist in {source_type}")
-                            
+
             df_result = pd.concat([df_result, df[df.columns.intersection(COLS)]])
     
-    # Drop duplicates based on Title OR DOI
+    # Drop duplicates based on Title OR DOI, excluding null values
     size_before = df_result.shape[0]
-    df_result = df_result.drop_duplicates('Title').drop_duplicates('DOI')
+    df_result = df_result[(~df_result['Title'].duplicated()) | df_result['Title'].isna()]
+    df_result = df_result[(~df_result['DOI'].duplicated()) | df_result['DOI'].isna()]
     size_after = df_result.shape[0]
     print(f"Removed {size_before - size_after} duplicates from {size_before} records.")
     # Only keep top X results per folder-source pair
@@ -229,7 +237,7 @@ def analyze_text():
 
     # For every Folder
     for folder in folders:
-        pdfs = list(folder.glob(PDF_GLOB_PATTERN))
+        pdfs = list(folder.glob(GLOB_PATTERN_PDF))
         corpus = []
         
         # For every PDF
@@ -347,7 +355,6 @@ def main():
     # create_wordclouds()
     # create_pub_year_plot()
     print(f'Elapsed Time: {timedelta(seconds=timer() - start)}')
-
 
 
 if __name__ == '__main__':
