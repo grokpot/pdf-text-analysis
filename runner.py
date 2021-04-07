@@ -20,6 +20,7 @@ nltk.download('stopwords')
 import string
 from wordcloud import WordCloud
 
+DEBUG = True
 INPUT_FOLDER_PATH = './input'
 OUTPUT_FOLDER_PATH = './output'
 OUTPUT_DIR_RENAMED_PDFS = 'renamed-pdfs'
@@ -27,12 +28,18 @@ GLOB_PATTERN_PDF = '**/*.pdf'
 GLOB_PATTERN_XLSX = '**/*.xlsx'
 GLOB_PATTERN_XLS = '**/*.xls'
 GLOB_PATTERN_CSV = '**/*.csv'
+SCIMAGO_RANKINGS_FILENAME = 'rankings-scimago.csv'
 BLACKLIST_PARTIALS = ['cid:']
 BLACKLIST_EXACT = ['author', 'pp', 'et', 'al', 'supply', 'chain', 'sustainability', 'sustainable', 'environmental', 'environment', 'management', 'research', 'literature', 'review', 'paper', 'journal']
 BLACKLIST_PUNCTUATION = ['.', '-']
 META_LABEL_PUB_YEAR = 'pub_year'
 META_LABEL_TITLE = 'title'
 NUM_FOLDER_SOURCE_PAIRS_TO_KEEP = 20
+
+
+def _debug(message):
+    if DEBUG:
+        print(message)
 
 
 def _get_sub_folders():
@@ -141,7 +148,9 @@ def combine_search_files():
             'Year': 'Year', 
             'Journal': 'Source title', 
             'DOI': 'DOI',
-            'URL': 'Link'
+            'URL': 'Link',
+            'ISSN': None,
+            'eISSN': None
         },
         'wos': {
             'Source': 'Web of Science',
@@ -150,7 +159,9 @@ def combine_search_files():
             'Year': 'Publication Year', 
             'Journal': 'Source Title', 
             'DOI': 'DOI',
-            'URL': None
+            'URL': None,
+            'ISSN': 'ISSN',
+            'eISSN': 'EISSN'
         }, 
         'ieee': {
             'Source': 'IEEE',
@@ -159,7 +170,9 @@ def combine_search_files():
             'Year': 'Publication Year', 
             'Journal': 'Publication Title', 
             'DOI': 'DOI',
-            'URL': 'PDF Link'
+            'URL': 'PDF Link',
+            'ISSN': 'ISSN',
+            'eISSN': None
         },
         'springer': {
             'Source': 'Springer',
@@ -168,7 +181,9 @@ def combine_search_files():
             'Year': 'Publication Year', 
             'Journal': 'Publication Title', 
             'DOI': 'DOI',
-            'URL': 'URL'
+            'URL': 'URL',
+            'ISSN': None,
+            'eISSN': None
         },
         'tf': {
             'Source': 'Taylor Francis',
@@ -177,11 +192,13 @@ def combine_search_files():
             'Year': 'Volume year', 
             'Journal': 'Journal title', 
             'DOI': 'DOI',
-            'URL': 'URL'
+            'URL': 'URL',
+            'ISSN': None,
+            'eISSN': None
         }
     }
 
-    COLS = ['Folder', 'Source', 'Result Rank', 'Title', 'Authors', 'Year', 'Journal', 'DOI', 'URL']
+    COLS_TO_READ = ['Folder', 'Source', 'Result Rank', 'Title', 'Authors', 'Year', 'Journal', 'ISSN', 'eISSN', 'DOI', 'URL']
     df_result = pd.DataFrame()
     df = pd.DataFrame()
 
@@ -201,7 +218,7 @@ def combine_search_files():
                 df = pd.read_excel(f)
   
             # Iterate columns. Some are special
-            for col in COLS:
+            for col in COLS_TO_READ:
                 if col == 'Result Rank':
                     df['Result Rank'] = df.index
                 elif col == 'Folder':
@@ -216,7 +233,14 @@ def combine_search_files():
                         except:
                             print(f"{col} doesn't exist in {source_type}")
 
-            df_result = pd.concat([df_result, df[df.columns.intersection(COLS)]])
+            # WoS has two ISSN columns
+            if 'ISSN' in df.columns:
+                if 'eISSN' in df.columns:
+                    # https://stackoverflow.com/a/62681798/2016473
+                    df['ISSN'] = df[['ISSN', 'eISSN']].stack().groupby(level=0).agg(','.join)
+                df['ISSN'] = df['ISSN'].str.replace('-', '')
+
+            df_result = pd.concat([df_result, df[df.columns.intersection(COLS_TO_READ)]])
     
     # Drop duplicates based on Title OR DOI, excluding null values
     size_before = df_result.shape[0]
@@ -226,8 +250,31 @@ def combine_search_files():
     print(f"Removed {size_before - size_after} duplicates from {size_before} records.")
     # Only keep top X results per folder-source pair
     df_result = df_result.groupby(['Folder', 'Source']).head(NUM_FOLDER_SOURCE_PAIRS_TO_KEEP)
+    
+    # Apply Journal Rankings
+    df_rankings_scimago = pd.read_csv(Path(INPUT_FOLDER_PATH, SCIMAGO_RANKINGS_FILENAME), delimiter=';')
+    df_rankings_scimago.rename({'SJR': 'Rank: SJR', 'Title': 'Journal'}, axis=1, inplace=True)
+    # Merge on Journal name
+    df_result = df_result.merge(df_rankings_scimago[['Journal', 'Rank: SJR']], on='Journal', how='left')
+    # Merge on ISSN, could probably be simplified with pandas magic
+    def _issn_lookup(series):
+        issns = str(series[0])
+        sjr = series[1] if not pd.isna(series[1]) else None
+        if not sjr:
+            for issn in issns.split(','):
+                sjr = df_rankings_scimago.loc[df_rankings_scimago['Issn'].str.contains(issn), 'Rank: SJR'].tolist() or None
+                if sjr:
+                    if len(sjr) > 1:
+                        _debug(f"Multiple ratings found for ISSN {issn}: {sjr}")
+                    sjr = sjr[0]
+                    break
+        return sjr
+    df_result[['Rank: SJR']] = df_result[['ISSN', 'Rank: SJR']].apply(lambda series: _issn_lookup(series), axis=1)
+
     # Reorder the columns
-    df_result = df_result[COLS]
+    COLS_TO_WRITE = ['Folder', 'Source', 'Title', 'Result Rank', 'Authors', 'Year', 'Journal', 'ISSN', 'Rank: SJR', 'DOI', 'URL']
+    df_result = df_result[COLS_TO_WRITE]
+
     df_result.to_excel(Path(OUTPUT_FOLDER_PATH, 'combined_searches.xlsx'), index=False)
 
 
