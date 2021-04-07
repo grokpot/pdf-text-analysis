@@ -2,3 +2,6 @@
 *
 # Except this file
 !.gitignore
+
+# Except SJR Rankings
+!scimagojr 2019.csv
