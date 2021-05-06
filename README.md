@@ -37,8 +37,9 @@ By using this tool, these 10 result sets still must be searched and downloaded, 
 ## Installation and Execution
 1. Check that `python` and `git` are properly installed. If not, google how to do that.  
 2. Check that `pip` is installed. If not, google how to do that.  
-3. Run `pip install -r requirements.txt`
-4. Run `python3 runner.py`
+3. Git clone this project
+4. Run `pip install -r requirements.txt`
+5. Run `python3 runner.py`
 
 ## TODOS
 * Keyword search functionality across folders/pdfs
