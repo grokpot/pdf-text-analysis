@@ -23,6 +23,13 @@ Searching for these SKSs across five journal databases would result in **10 resu
 
 By using this tool, these 10 result sets still must be searched and downloaded, but steps 1-3 are now automated.
 
+## Research Databases Currently Supported
+ * [Scopus](https://www.scopus.com/)
+ * [Web of Science (WoS) (Web of Knowledge)](https://login.webofknowledge.com)
+ * [Springer Link](https://link.springer.com/)
+ * [Taylor & Francis (TF)](https://www.tandfonline.com/)
+ * [IEEE Explore](https://ieeexplore.ieee.org/Xplore/home.jsp)
+
 ## Example
 1. Download this codebase
 2. Go to webofknowledge.com and search for `(literature AND review) AND (automated)`. 
